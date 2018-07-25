@@ -127,7 +127,7 @@ SupportRecord = namedtuple( # pylint: disable=C0103
 RelationRecord = namedtuple( # pylint: disable=C0103
     'RelationRecord', SupportRecord._fields + ('ordered_statistics',))
 OrderedStatistic = namedtuple( # pylint: disable=C0103
-    'OrderedStatistic', ('items_base', 'items_add', 'confidence', 'lift',))
+    'OrderedStatistic', ('items_base', 'items_add', 'confidence', 'lift','kulc', 'ir'))
 
 
 ################################################################################
@@ -217,9 +217,14 @@ def gen_ordered_statistics(transaction_manager, record):
         items_add = frozenset(items.difference(items_base))
         confidence = (
             record.support / transaction_manager.calc_support(items_base))
+        confidence_opp = (
+            record.support / transaction_manager.calc_support(items_add))
         lift = confidence / transaction_manager.calc_support(items_add)
+        kulc = (confidence+confidence_opp)/2
+        ir = abs(transaction_manager.calc_support(items_base)-transaction_manager.calc_support(items_add))/(transaction_manager.calc_support(items_base)-transaction_manager.calc_support(items_add)-record.support)
+
         yield OrderedStatistic(
-            frozenset(items_base), frozenset(items_add), confidence, lift)
+            frozenset(items_base), frozenset(items_add), confidence, lift, kulc,ir)
 
 
 def filter_ordered_statistics(ordered_statistics, **kwargs):
@@ -235,11 +240,14 @@ def filter_ordered_statistics(ordered_statistics, **kwargs):
     """
     min_confidence = kwargs.get('min_confidence', 0.0)
     min_lift = kwargs.get('min_lift', 0.0)
+    min_kulc = kwargs.get('min_kulc', 0.0)
 
     for ordered_statistic in ordered_statistics:
         if ordered_statistic.confidence < min_confidence:
             continue
         if ordered_statistic.lift < min_lift:
+            continue
+        if ordered_statistic.kulc < min_kulc:
             continue
         yield ordered_statistic
 
@@ -265,6 +273,7 @@ def apriori(transactions, **kwargs):
     min_support = kwargs.get('min_support', 0.1)
     min_confidence = kwargs.get('min_confidence', 0.0)
     min_lift = kwargs.get('min_lift', 0.0)
+    min_kulc = kwargs.get('min_kulc', 0.0)
     max_length = kwargs.get('max_length', None)
 
     # Check arguments.
@@ -291,6 +300,7 @@ def apriori(transactions, **kwargs):
                 _gen_ordered_statistics(transaction_manager, support_record),
                 min_confidence=min_confidence,
                 min_lift=min_lift,
+                min_kulc=min_kulc,
             )
         )
         if not ordered_statistics:
@@ -347,6 +357,10 @@ def parse_args(argv):
         '-d', '--delimiter', metavar='str',
         help='Delimiter for items of transactions (default: tab).',
         type=str, default='\t')
+    parser.add_argument(
+        '-k', '--min-kulc', metavar='float',
+        help='Minimum kulc (default: 0.0).',
+        type=float, default=0.0)
     parser.add_argument(
         '-f', '--out-format', metavar='str',
         help='Output format ({0}; default: {1}).'.format(
@@ -410,9 +424,9 @@ def dump_as_two_item_tsv(record, output_file):
             continue
         if len(ordered_stats.items_add) != 1:
             continue
-        output_file.write('{0}\t{1}\t{2:.8f}\t{3:.8f}\t{4:.8f}{5}'.format(
+        output_file.write('{0}\t{1}\t{2:.8f}\t{3:.8f}\t{4:.8f}\t{5:.8f}{6}'.format(
             list(ordered_stats.items_base)[0], list(ordered_stats.items_add)[0],
-            record.support, ordered_stats.confidence, ordered_stats.lift,
+            record.support, ordered_stats.confidence, ordered_stats.lift,ordered_stats.kulc,
             os.linesep))
 
 
@@ -432,6 +446,7 @@ def main(**kwargs):
         transactions,
         max_length=args.max_length,
         min_support=args.min_support,
+        min_kulc=args.min_kulc,
         min_confidence=args.min_confidence)
     for record in result:
         args.output_func(record, args.output)
